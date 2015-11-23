@@ -30,7 +30,7 @@ stops playing:
     ytcast --wait
 
 (You could use this to drive a playlist, by then loading another video,
-sleeping a bit, and using --wait again.)
+sleeping a bit, and using `--wait` again.)
 
 To stop playback and quit the app entirely (it's a package deal), use:
 
@@ -64,7 +64,7 @@ There's no debugging for the RAMP stuff yet.
 I was able to piece together RAMP commands (it's proprietary) for
 everything except loading a video into the currently running instance of
 the app. Unfortunately, this means that loading a video always restarts
-the app and drops any --wait connections you might have open. Please
+the app and drops any `--wait` connections you might have open. Please
 contact me if you have any ideas.
 
 When the app is starting up, it will sometimes give you a new websocket
