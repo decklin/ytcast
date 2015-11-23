@@ -1,0 +1,276 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'net/http'
+require 'cgi'
+require 'simple_upnp'
+require 'nokogiri'
+require 'faye/websocket'
+require 'eventmachine'
+require 'json'
+
+RETRY_DELAY = 5
+INFO_DELAY = 10
+
+def yt_video_id(str)
+  case str
+  when /^https?:\/\/youtu\.be\//
+    URI.parse(str).path.sub('/', '')
+  when /^https?:\/\/((www|m)\.)?youtube\.com\/embed\//
+    URI.parse(str).path.sub('/embed/', '')
+  when /^https?:\/\/((www|m)\.)?youtube\.com\/v\//
+    URI.parse(str).path.sub('/v/', '')
+  when /^https?:\/\/((www|m)\.)?youtube\.com\/watch\?/, /^\/watch\?/
+    CGI.parse(URI.parse(str).query)['v'].first
+  when /^[\w-]{11}$/
+    str
+  else
+    nil
+  end
+end
+
+find_dev_name = nil
+host = nil
+port = 8008
+mode = :load
+cmd_type = nil
+cmd_args = {}
+
+opts = OptionParser.new do |opts|
+  opts.banner = 'ytcast [options] VIDEO_ID_OR_URL'
+  opts.on('-?', '--help') do
+    puts opts
+    exit
+  end
+  opts.on('-n', '--name DEVICE') do |arg|
+    find_dev_name = arg
+  end
+  opts.on('-h', '--host HOST') do |arg|
+    host = arg
+  end
+  opts.on('-p', '--port PORT') do |arg|
+    port = arg
+  end
+  opts.on('-d', '--dump-status') do
+    mode = :status
+  end
+  opts.on('-q', '--quit') do
+    mode = :quit
+  end
+  opts.on('-r', '--ramp-load URL') do |arg|
+    mode = :command
+    cmd_type = 'LOAD' # doesn't work
+    cmd_args = { src: arg }
+  end
+  opts.on('-V', '--volume N') do |arg|
+    mode = :command
+    cmd_type = 'VOLUME'
+    cmd_args = { volume: arg.to_i.fdiv(100) }
+  end
+  opts.on('-M', '--mute') do |arg|
+    mode = :command
+    cmd_type = 'VOLUME'
+    cmd_args = { muted: true }
+  end
+  opts.on('-U', '--unmute') do |arg|
+    mode = :command
+    cmd_type = 'VOLUME'
+    cmd_args = { muted: false }
+  end
+  opts.on('-P', '--pause') do
+    mode = :command
+    cmd_type = 'STOP'
+  end
+  opts.on('-R', '--resume') do
+    mode = :command
+    cmd_type = 'PLAY'
+  end
+  opts.on('-S', '--seek POS') do |arg|
+    mode = :command
+    cmd_type = 'PLAY'
+    if arg =~ /^(\d+):([\d.]+)$/
+      pos = $1.to_i * 60 + $2.to_f
+    else
+      pos = arg.to_f
+    end
+    cmd_args = { position: pos }
+  end
+  opts.on('-w', '--wait') do
+    mode = :wait
+  end
+end
+opts.parse!
+
+if mode == :load
+  video_id = yt_video_id(ARGV.shift)
+  unless video_id
+    STDERR.puts opts
+    exit 2
+  end
+end
+
+class ChromecastTube
+  def initialize(host, port)
+    until host && port
+      SimpleUpnp::Discovery.find do |device|
+        dev_info = device.to_json(true) # not actually JSON
+        dev_type = dev_info['root']['device']['deviceType'] rescue nil
+        if dev_type && dev_type.start_with?('urn:dial-multiscreen-org:')
+          friendly_name = dev_info['root']['device']['friendlyName'] rescue nil
+          if find_dev_name.nil? || friendly_name == find_dev_name
+            base_uri = URI.parse(dev_info['root']['URLBase'])
+            puts "discovered #{friendly_name} at #{base_uri}"
+            host = base_uri.host
+            port = base_uri.port
+            break
+          end
+        end
+      end
+      unless host && port
+        puts "no device discovered (yet), retrying..."
+        sleep RETRY_DELAY
+      end
+    end
+    @host = host
+    @port = port
+    @path = '/apps/YouTube'
+    @cmd_id = 0
+  end
+  def http_client
+    Net::HTTP.new(@host, @port)
+  end
+  def get_status
+    http_client.get(@path).body
+  end
+  def launch(data = nil)
+    res = http_client.post(@path, data)
+    res.code == '201'
+  end
+  def create_session
+    # It doesn't seem to matter what you post to this endpoint, just that it's JSON.
+    # Some examples set {"channel": 0, "senderId": {"appName": "Chromecast", "senderId": "..."}}
+    Net::HTTP.new(@svc_uri.host, @svc_uri.port).post(@svc_uri.path, '{}', 'Content-Type' => 'application/json').body
+  end
+  def quit
+    res = http_client.delete(@path)
+    res.code == '200'
+  end
+  def open_ramp_websocket(&blk)
+    begin
+      until @svc_uri
+        status = Nokogiri::XML(get_status)
+        svc_elt = status.xpath('/dial:service/chrome:servicedata/chrome:connectionSvcURL',
+                               'dial' => 'urn:dial-multiscreen-org:schemas:dial',
+                               'chrome' => 'urn:chrome.google.com:cast')
+        # When the app is starting up, there's a <servicedata> elemement but it's empty.
+        if svc_elt.text.empty?
+          puts 'no app session service found (yet), retrying...'
+          sleep RETRY_DELAY
+        else
+          @svc_uri = URI.parse(svc_elt.text)
+        end
+      end
+      session = JSON.parse(create_session)['URL']
+      puts "connecting to app via #{session}"
+      EM.run do
+        @ws = Faye::WebSocket::Client.new(session)
+        @wanted_to_close = false
+        @ws.on :close do |event|
+          puts "connection closed: wanted #{@wanted_to_close.inspect}, code #{event.code}, reason #{event.reason.inspect}"
+          exit
+        end
+        @ws.on :error do |event|
+          puts "protocol error: #{event.message}"
+          exit 1
+        end
+        instance_eval(&blk)
+      end
+    rescue => err
+      STDERR.puts "connection error: #{err}"
+      exit 1
+    end
+  end
+  def ramp_send(cmd_type, params={})
+    @cmd_id += 1
+    cmd = JSON.generate(['ramp', {'type' => cmd_type, 'cmd_id' => @cmd_id}.merge(params)])
+    @ws.send(cmd)
+  end
+  def ramp_close
+    puts 'about to close on purpose'
+    @wanted_to_close = true
+    @ws.close
+  end
+  def parse_ramp_msg(raw, &blk)
+    data = JSON.parse(raw)
+    if data.is_a?(Array) && data[0] == 'ramp'
+      blk.call(data[1])
+    else
+      STDERR.puts "non-RAMP msg: #{raw}"
+    end
+  end
+  def fmt_t(secs)
+    secs ? '%d:%04.1f' % [secs / 60, secs % 60] : '?'
+  end
+  def state_name(state)
+    case state
+    when 0; 'idle'
+    when 1; 'stopped/paused'
+    when 2; 'playing'
+    else; 'unknown/error'
+    end
+  end
+end
+
+tube = ChromecastTube.new(host, port)
+
+case mode
+when :load
+  if tube.launch(URI.encode_www_form(v: video_id))
+    puts "launched app with video ID #{video_id}"
+  else
+    puts 'error launching app (bad video?)'
+  end
+when :status
+  puts tube.get_status
+when :quit
+  if tube.quit
+    puts 'quit'
+  else
+    puts 'error quitting app (not running?)'
+  end
+when :command
+  tube.open_ramp_websocket do
+    @ws.on :open do |event|
+      ramp_send(cmd_type, cmd_args)
+      @oneshot_id = @cmd_id
+    end
+    @ws.on :message do |event|
+      parse_ramp_msg(event.data) do |msg|
+        if msg['cmd_id'] == @oneshot_id
+          puts "got a response for the oneshot: #{msg}"
+          ramp_close
+        end
+      end
+    end
+  end
+when :wait
+  tube.open_ramp_websocket do
+    # This isn't strictly necessary, (we'll get a 'STATUS' message on state changes), but it's nice to have some updates.
+    EM::PeriodicTimer.new(INFO_DELAY) do
+      ramp_send('INFO')
+    end
+    has_ever_been_playing = false
+    @ws.on :message do |event|
+      parse_ramp_msg(event.data) do |msg|
+        status = msg['status']
+        state = status['state']
+        puts "#{state_name(state)}: #{fmt_t(status['current_time'])} of #{fmt_t(status['duration'])} (vol #{(status['volume']*100).round}%): #{status['title']}"
+        if state == 2
+          has_ever_been_playing = true
+        elsif has_ever_been_playing && (state == 0 || status['current_time'] == 0)
+          ramp_close
+        end
+      end
+    end
+  end
+end
