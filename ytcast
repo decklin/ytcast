@@ -29,7 +29,7 @@ def yt_video_id(str)
   end
 end
 
-find_dev_name = nil
+name = nil
 host = nil
 port = 8008
 mode = :load
@@ -43,7 +43,7 @@ opts = OptionParser.new do |opts|
     exit
   end
   opts.on('-n', '--name DEVICE') do |arg|
-    find_dev_name = arg
+    name = arg
   end
   opts.on('-h', '--host HOST') do |arg|
     host = arg
@@ -110,14 +110,14 @@ if mode == :load
 end
 
 class ChromecastTube
-  def initialize(host, port)
+  def initialize(name, host, port)
     until host && port
       SimpleUpnp::Discovery.find do |device|
         dev_info = device.to_json(true) # not actually JSON
         dev_type = dev_info['root']['device']['deviceType'] rescue nil
         if dev_type && dev_type.start_with?('urn:dial-multiscreen-org:')
           friendly_name = dev_info['root']['device']['friendlyName'] rescue nil
-          if find_dev_name.nil? || friendly_name == find_dev_name
+          if name.nil? || friendly_name == name
             base_uri = URI.parse(dev_info['root']['URLBase'])
             puts "discovered #{friendly_name} at #{base_uri}"
             host = base_uri.host
@@ -221,7 +221,7 @@ class ChromecastTube
   end
 end
 
-tube = ChromecastTube.new(host, port)
+tube = ChromecastTube.new(name, host, port)
 
 case mode
 when :load
