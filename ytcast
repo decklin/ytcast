@@ -174,11 +174,13 @@ class ChromecastTube
       puts "connecting to app via #{session}"
       EM.run do
         @ws = Faye::WebSocket::Client.new(session)
+        # Leave some state around here so we can print a noisier message on unexpected close. TODO: remove?
         @wanted_to_close = false
         @ws.on :close do |event|
-          puts "connection closed: wanted #{@wanted_to_close.inspect}, code #{event.code}, reason #{event.reason.inspect}"
+          puts 'connection closed' + (@wanted_to_close ? '' : "unexpectedly: code #{event.code}, reason #{event.reason.inspect}")
           exit
         end
+        # I have not run into this yet.
         @ws.on :error do |event|
           puts "protocol error: #{event.message}"
           exit 1
@@ -196,7 +198,6 @@ class ChromecastTube
     @ws.send(cmd)
   end
   def ramp_close
-    puts 'about to close on purpose'
     @wanted_to_close = true
     @ws.close
   end
@@ -205,7 +206,7 @@ class ChromecastTube
     if data.is_a?(Array) && data[0] == 'ramp'
       blk.call(data[1])
     else
-      STDERR.puts "non-RAMP msg: #{raw}"
+      STDERR.puts "non-RAMP msg, ignoring: #{raw}"
     end
   end
   def fmt_t(secs)
