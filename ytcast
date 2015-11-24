@@ -242,15 +242,7 @@ when :command
   tube.open_ramp_websocket do
     @ws.on :open do |event|
       ramp_send(cmd_type, cmd_args)
-      @oneshot_id = @cmd_id
-    end
-    @ws.on :message do |event|
-      parse_ramp_msg(event.data) do |msg|
-        if msg['cmd_id'] == @oneshot_id
-          puts "got a response for the oneshot: #{msg}"
-          ramp_close
-        end
-      end
+      ramp_close
     end
   end
 when :wait
