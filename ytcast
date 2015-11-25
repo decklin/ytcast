@@ -179,7 +179,7 @@ class ChromecastTube
         # Leave some state around here so we can print a noisier message on unexpected close. TODO: remove?
         @wanted_to_close = false
         @ws.on :close do |event|
-          puts 'connection closed' + (@wanted_to_close ? '' : "unexpectedly: code #{event.code}, reason #{event.reason.inspect}")
+          puts 'connection closed' + (@wanted_to_close ? '' : " unexpectedly: code #{event.code}, reason #{event.reason.inspect}")
           exit
         end
         # I have not run into this yet.
