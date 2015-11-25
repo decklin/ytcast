@@ -118,11 +118,13 @@ class ChromecastTube
         if dev_type && dev_type.start_with?('urn:dial-multiscreen-org:')
           friendly_name = dev_info['root']['device']['friendlyName'] rescue nil
           if name.nil? || friendly_name == name
-            base_uri = URI.parse(dev_info['root']['URLBase'])
-            puts "discovered #{friendly_name} at #{base_uri}"
-            host = base_uri.host
-            port = base_uri.port
-            break
+            base_uri = URI.parse(dev_info['root']['URLBase']) rescue nil
+            if base_uri
+              puts "discovered #{friendly_name} at #{base_uri}"
+              host = base_uri.host
+              port = base_uri.port
+              break
+            end
           end
         end
       end
