@@ -57,7 +57,10 @@ You can dump the app information with:
 
     ytcast --info
 
-There's no debugging for the RAMP stuff yet.
+To turn on debugging (print all RAMP messages sent and received, and
+additional information about connections):
+
+    ytcast --debug
 
 # Limitations
 

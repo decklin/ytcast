@@ -11,6 +11,7 @@ require 'json'
 
 RETRY_DELAY = 5
 INFO_DELAY = 10
+DEBUG_DELAY = 5
 
 def yt_video_id(str)
   case str
@@ -33,6 +34,7 @@ name = nil
 host = nil
 port = 8008
 mode = :load
+debug = false
 cmd_type = nil
 cmd_args = {}
 
@@ -53,6 +55,9 @@ opts = OptionParser.new do |opts|
   end
   opts.on('-I', '--info') do
     mode = :info
+  end
+  opts.on('-D', '--debug') do
+    debug = true
   end
   opts.on('-q', '--quit') do
     mode = :quit
@@ -111,8 +116,14 @@ if mode == :load
 end
 
 class ChromecastTube
-  def initialize(name, host, port)
-    until host && port
+  def initialize(name, host, port, debug)
+    @host = host
+    @port = port
+    @path = '/apps/YouTube'
+    @debug = debug
+    @cmd_id = 0
+    until @host && @port
+      # The simple_upnp API is a bit weird: #find should be called #each, and #to_json should be called #to_h.
       SimpleUpnp::Discovery.find do |device|
         dev_info = device.to_json(true) # not actually JSON
         dev_type = dev_info['root']['device']['deviceType'] rescue nil
@@ -121,23 +132,19 @@ class ChromecastTube
           if name.nil? || friendly_name == name
             base_uri = URI.parse(dev_info['root']['URLBase']) rescue nil
             if base_uri
-              puts "discovered #{friendly_name} at #{base_uri}"
-              host = base_uri.host
-              port = base_uri.port
+              puts "discovered #{friendly_name}" + (@debug ? " at #{base_uri}" : '')
+              @host = base_uri.host
+              @port = base_uri.port
               break
             end
           end
         end
       end
-      unless host && port
+      unless @host && @port
         puts "no device discovered (yet), retrying..."
         sleep RETRY_DELAY
       end
     end
-    @host = host
-    @port = port
-    @path = '/apps/YouTube'
-    @cmd_id = 0
   end
   def http_client
     Net::HTTP.new(@host, @port)
@@ -174,7 +181,7 @@ class ChromecastTube
         end
       end
       session = JSON.parse(create_session)['URL']
-      puts "connecting to app via #{session}"
+      puts "connecting to app via #{session}" if @debug
       EM.run do
         @ws = Faye::WebSocket::Client.new(session)
         # Leave some state around here so we can print a noisier message on unexpected close. TODO: remove?
@@ -198,18 +205,21 @@ class ChromecastTube
   def ramp_send(cmd_type, params={})
     @cmd_id += 1
     cmd = JSON.generate(['ramp', {'type' => cmd_type, 'cmd_id' => @cmd_id}.merge(params)])
+    puts "sending: #{cmd}" if @debug
     @ws.send(cmd)
   end
   def ramp_close
+    puts 'closing connection' if @debug
     @wanted_to_close = true
     @ws.close
   end
   def parse_ramp_msg(raw, &blk)
     data = JSON.parse(raw)
     if data.is_a?(Array) && data[0] == 'ramp'
+      puts "received RAMP message: #{data[1]}" if @debug
       blk.call(data[1])
     else
-      STDERR.puts "non-RAMP msg, ignoring: #{raw}"
+      puts "received non-RAMP message, ignoring: #{raw}"
     end
   end
   def fmt_t(secs)
@@ -225,7 +235,7 @@ class ChromecastTube
   end
 end
 
-tube = ChromecastTube.new(name, host, port)
+tube = ChromecastTube.new(name, host, port, debug)
 
 case mode
 when :load
@@ -237,16 +247,33 @@ when :load
 when :info
   puts tube.get_info
 when :quit
-  if tube.quit
-    puts 'quit'
-  else
+  unless tube.quit
     puts 'error quitting app (not running?)'
   end
 when :command
   tube.open_ramp_websocket do
     @ws.on :open do |event|
+      puts "sending #{cmd_type} command"
       ramp_send(cmd_type, cmd_args)
-      ramp_close
+      if debug
+        @saved_id = @cmd_id
+      else
+        ramp_close
+      end
+    end
+    if debug
+      @ws.on :message do |event|
+        parse_ramp_msg(event.data) do |msg|
+          if msg['cmd_id'] == @saved_id
+            puts 'got a response matching the command'
+            ramp_close
+          end
+        end
+      end
+      EM::Timer.new(DEBUG_DELAY) do
+        puts 'no response, giving up'
+        ramp_close
+      end
     end
   end
 when :wait
@@ -264,6 +291,7 @@ when :wait
         if state == 2
           has_ever_been_playing = true
         elsif has_ever_been_playing && (state == 0 || status['current_time'] == 0)
+          puts 'finished playing'
           ramp_close
         end
       end
