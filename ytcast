@@ -42,57 +42,58 @@ opts = OptionParser.new do |opts|
     puts opts
     exit
   end
-  opts.on('-n', '--name DEVICE') do |arg|
+  opts.on('-N', '--name DEVICE') do |arg|
     name = arg
   end
-  opts.on('-h', '--host HOST') do |arg|
+  opts.on('-H', '--host HOST') do |arg|
     host = arg
   end
-  opts.on('-p', '--port PORT') do |arg|
+  opts.on('-P', '--port PORT') do |arg|
     port = arg
   end
-  opts.on('-d', '--dump-status') do
-    mode = :status
+  opts.on('-I', '--info') do
+    mode = :info
   end
   opts.on('-q', '--quit') do
     mode = :quit
   end
-  opts.on('-r', '--ramp-load URL') do |arg|
+  # This doesn't work yet, so it's not documented... {"error": {"domain": "YouTube.MDx", "code": 1}}
+  opts.on('-l', '--load URL') do |arg|
     mode = :command
-    cmd_type = 'LOAD' # doesn't work
-    cmd_args = { src: arg }
+    cmd_type = 'LOAD'
+    cmd_args = { title: 'unknown', src: arg, autoplay: false }
   end
-  opts.on('-V', '--volume N') do |arg|
+  opts.on('-v', '--volume N') do |arg|
     mode = :command
     cmd_type = 'VOLUME'
-    cmd_args = { volume: arg.to_i.fdiv(100) }
+    cmd_args = { volume: arg.to_f / 100 }
   end
-  opts.on('-M', '--mute') do |arg|
+  opts.on('-m', '--mute') do |arg|
     mode = :command
     cmd_type = 'VOLUME'
     cmd_args = { muted: true }
   end
-  opts.on('-U', '--unmute') do |arg|
+  opts.on('-u', '--unmute') do |arg|
     mode = :command
     cmd_type = 'VOLUME'
     cmd_args = { muted: false }
   end
-  opts.on('-P', '--pause') do
+  opts.on('-p', '--pause') do
     mode = :command
     cmd_type = 'STOP'
   end
-  opts.on('-R', '--resume') do
+  opts.on('-r', '--resume') do
     mode = :command
     cmd_type = 'PLAY'
   end
-  opts.on('-S', '--seek POS') do |arg|
+  opts.on('-s', '--seek POS') do |arg|
     mode = :command
-    cmd_type = 'PLAY'
     if arg =~ /^(\d+):([\d.]+)$/
       pos = $1.to_i * 60 + $2.to_f
     else
       pos = arg.to_f
     end
+    cmd_type = 'PLAY'
     cmd_args = { position: pos }
   end
   opts.on('-w', '--wait') do
@@ -141,7 +142,7 @@ class ChromecastTube
   def http_client
     Net::HTTP.new(@host, @port)
   end
-  def get_status
+  def get_info
     http_client.get(@path).body
   end
   def launch(data = nil)
@@ -160,10 +161,10 @@ class ChromecastTube
   def open_ramp_websocket(&blk)
     begin
       until @svc_uri
-        status = Nokogiri::XML(get_status)
-        svc_elt = status.xpath('/dial:service/chrome:servicedata/chrome:connectionSvcURL',
-                               'dial' => 'urn:dial-multiscreen-org:schemas:dial',
-                               'chrome' => 'urn:chrome.google.com:cast')
+        info = Nokogiri::XML(get_info)
+        svc_elt = info.xpath('/dial:service/chrome:servicedata/chrome:connectionSvcURL',
+                             'dial' => 'urn:dial-multiscreen-org:schemas:dial',
+                             'chrome' => 'urn:chrome.google.com:cast')
         # When the app is starting up, there's a <servicedata> elemement but it's empty.
         if svc_elt.text.empty?
           puts 'no app session service found (yet), retrying...'
@@ -233,8 +234,8 @@ when :load
   else
     puts 'error launching app (bad video?)'
   end
-when :status
-  puts tube.get_status
+when :info
+  puts tube.get_info
 when :quit
   if tube.quit
     puts 'quit'

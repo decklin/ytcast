@@ -53,9 +53,9 @@ using from the previous section.
 
 # Debugging
 
-You can dump the DIAL information with:
+You can dump the app information with:
 
-    ytcast --dump-status
+    ytcast --info
 
 There's no debugging for the RAMP stuff yet.
 
