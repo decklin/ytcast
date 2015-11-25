@@ -105,6 +105,9 @@ opts = OptionParser.new do |opts|
     cmd_type = 'PLAY'
     cmd_args = { position: pos }
   end
+  opts.on('-S', '--status') do
+    mode = :status
+  end
   opts.on('-w', '--wait') do
     mode = :wait
   end
@@ -254,6 +257,16 @@ when :info
 when :quit
   unless tube.quit
     puts 'error quitting app (not running?)'
+  end
+when :status
+  tube.open_ramp_websocket do
+    # We'll get a status message automatically when we open the connection.
+    @ws.on :message do |event|
+      parse_ramp_msg(event.data) do |msg|
+        puts display_status(msg['status'])
+        ramp_close
+      end
+    end
   end
 when :command
   tube.open_ramp_websocket do

@@ -24,7 +24,11 @@ Various things you can do control a playing video:
     ytcast --resume
     ytcast --seek MM:SS
 
-To show the status of a playing video and periodically update until it
+To show the playback status:
+
+    ytcast --status
+
+To show the status and periodically update it until a playing video
 stops playing:
 
     ytcast --wait
