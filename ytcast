@@ -13,6 +13,10 @@ RETRY_DELAY = 5
 INFO_DELAY = 10
 DEBUG_DELAY = 5
 
+RAMP_STATE_IDLE = 0
+RAMP_STATE_STOP = 1
+RAMP_STATE_PLAY = 2
+
 def yt_video_id(str)
   case str
   when /^https?:\/\/youtu\.be\//
@@ -222,16 +226,17 @@ class ChromecastTube
       puts "received non-RAMP message, ignoring: #{raw}"
     end
   end
+  def display_status(status)
+    state_name = case status['state']
+                 when RAMP_STATE_PLAY; 'playing'
+                 when RAMP_STATE_STOP; 'paused'
+                 when RAMP_STATE_IDLE; 'idle'
+                 else; 'unknown'
+                 end
+    "#{state_name}: #{fmt_t(status['current_time'])} of #{fmt_t(status['duration'])} (vol #{(status['volume']*100).round}%): #{status['title']}"
+  end
   def fmt_t(secs)
     secs ? '%d:%04.1f' % [secs / 60, secs % 60] : '?'
-  end
-  def state_name(state)
-    case state
-    when 0; 'idle'
-    when 1; 'stopped/paused'
-    when 2; 'playing'
-    else; 'unknown/error'
-    end
   end
 end
 
@@ -286,11 +291,10 @@ when :wait
     @ws.on :message do |event|
       parse_ramp_msg(event.data) do |msg|
         status = msg['status']
-        state = status['state']
-        puts "#{state_name(state)}: #{fmt_t(status['current_time'])} of #{fmt_t(status['duration'])} (vol #{(status['volume']*100).round}%): #{status['title']}"
-        if state == 2
+        puts display_status(status)
+        if status['state'] == RAMP_STATE_PLAY
           has_ever_been_playing = true
-        elsif has_ever_been_playing && (state == 0 || status['current_time'] == 0)
+        elsif has_ever_been_playing && (status['state'] == RAMP_STATE_IDLE || status['current_time'] == 0)
           puts 'finished playing'
           ramp_close
         end
