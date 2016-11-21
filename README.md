@@ -9,6 +9,10 @@ thought these older protocols had been broken with a firmware update in
 2014, but I tried my Chromecast again when I bought a new TV in 2015 and
 they worked! So I cleaned this up and put it in its own repository.
 
+UPDATE: as of fall 2016, RAMP has been broken/removed by a software update
+again. So this can't do anything except launch videos and quit the app.
+I may figure out how to use CASTv2 but it looks very complicated.
+
 # Usage
 
 To start a video:

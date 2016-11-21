@@ -184,6 +184,8 @@ class ChromecastTube
                              'dial' => 'urn:dial-multiscreen-org:schemas:dial',
                              'chrome' => 'urn:chrome.google.com:cast')
         # When the app is starting up, there's a <servicedata> elemement but it's empty.
+        # FIXME: as of mid-late 2016 (probably due to a software update), it's always empty.
+        # So this is pretty much useless.
         if svc_elt.text.empty?
           puts 'no app session service found (yet), retrying...'
           sleep RETRY_DELAY
